@@ -16,16 +16,27 @@ Import ListNotations.
 Open Scope string_scope.
 
 (* ========================================================================== *)
-(* 1. AST                                                                     *)
+(* 1. AST (Renamed to avoid 'Graph' keyword collisions)                       *)
 (* ========================================================================== *)
 
-Definition path := list string.
+(* Recursive Graph structure: Name + Contents *)
+Inductive WGraph :=
+| MkGraph (name : string) (contents : list WGraph).
 
-Inductive graph_elem :=
-| GNode (p : path)
-| GArc  (src : path) (dst : path).
+(* Graph Elements: Nodes or Arcs between Graphs *)
+Inductive Welem :=
+| WNode (g : WGraph)
+| WArc  (src : WGraph) (dst : WGraph).
 
-Definition graph := list graph_elem.
+Definition result_list := list Welem.
+
+(* Helper: Converts ["std"; "io"] -> MkGraph "std" [MkGraph "io" []] *)
+Fixpoint path_to_wgraph (p : list string) : WGraph :=
+  match p with
+  | [] => MkGraph "" [] (* Should not occur with valid grammar *)
+  | [x] => MkGraph x []
+  | x :: xs => MkGraph x [path_to_wgraph xs]
+  end.
 
 (* ========================================================================== *)
 (* 2. INTERFACE                                                               *)
@@ -37,15 +48,15 @@ Inductive terminal_def :=
 | Space | Tab | CR | LF.
 
 Inductive nonterminal_def :=
-| Start         (* Top-level wrapper *)
-| Graph         (* List of terms *)
-| Term          (* Single statement: "a" or "a -> b" *)
-| EdgeOpt       (* Optional: "-> b" *)
-| Op            (* The arrow operator start "-" *)
-| OpTail        (* The rest of the arrow "..>" *)
-| Path          (* "std.io" *)
-| PathTail      (* ".io" *)
-| Unit          (* "std" *)
+| Start         
+| ElemList      (* List of elements (nodes/arcs) *)
+| Term          (* A single element *)
+| EdgeOpt       (* Optional edge target *)
+| Op            
+| OpTail        
+| Path          (* Raw list of strings *)
+| PathTail      
+| Unit          
 | Identifier
 | WS.
 
@@ -57,14 +68,14 @@ Definition t_semty_def (a : terminal_def) : Type :=
 
 Definition nt_semty_def (x : nonterminal_def) : Type :=
   match x with
-  | Start          => graph
-  | Graph          => graph
-  | Term           => graph_elem
-  | EdgeOpt        => option path
+  | Start          => result_list
+  | ElemList       => result_list
+  | Term           => Welem
+  | EdgeOpt        => option WGraph 
   | Op             => unit
   | OpTail         => unit
-  | Path           => path
-  | PathTail       => path
+  | Path           => list string
+  | PathTail       => list string
   | Unit           => string
   | Identifier     => string
   | WS             => unit
@@ -126,70 +137,51 @@ Definition welkin_grammar : grammar :=
        rule (WS, [])               (fun _ => tt);
 
        (* --- START --- *)
-       (* Start -> WS Graph *)
-       (* We consume initial WS, then enter the graph list *)
-       rule (Start, [NT WS; NT Graph])
-            (fun args => match args with (_, (g, _)) => g end);
+       rule (Start, [NT WS; NT ElemList])
+            (fun args => match args with (_, (l, _)) => l end);
 
-       (* --- GRAPH LIST --- *)
-       (* Graph -> Term Graph *)
-       (* Term is guaranteed to consume its own trailing whitespace *)
-       rule (Graph, [NT Term; NT Graph])
-            (fun args => match args with (t, (g, _)) => t :: g end);
+       (* --- ELEMENT LIST --- *)
+       rule (ElemList, [NT Term; NT ElemList])
+            (fun args => match args with (t, (l, _)) => t :: l end);
        
-       (* Graph -> epsilon *)
-       rule (Graph, []) 
+       rule (ElemList, []) 
             (fun _ => []);
 
        (* --- TERM --- *)
-       (* Term -> Path WS EdgeOpt *)
-       (* Crucial: Path consumes Id, then we consume WS immediately.
-          This prevents WS from "floating" between rules. *)
+       (* Path returns list string. We convert to recursive WGraph here. *)
        rule (Term, [NT Path; NT WS; NT EdgeOpt]) 
-            (fun args => match args with (p, (_, (opt, _))) => 
+            (fun args => match args with (raw_p, (_, (opt, _))) => 
+                           let g1 := path_to_wgraph raw_p in
                            match opt with
-                           | Some dst => GArc p dst
-                           | None     => GNode p
+                           | Some g2 => WArc g1 g2
+                           | None    => WNode g1
                            end
                          end);
 
        (* --- EDGE --- *)
-       (* EdgeOpt -> Op WS Path WS *)
-       (* The arrow operator is followed by WS, then the dest Path, then WS again. *)
+       (* EdgeOpt returns option WGraph *)
        rule (EdgeOpt, [NT Op; NT WS; NT Path; NT WS])
-            (fun args => match args with (_, (_, (p, (_, _)))) => Some p end);
+            (fun args => match args with (_, (_, (raw_p, (_, _)))) => 
+                           Some (path_to_wgraph raw_p) 
+                         end);
 
-       (* EdgeOpt -> epsilon *)
-       (* Conflict Check: Follow(EdgeOpt) = Follow(Term) = First(Graph) = Id. 
-          First(Op) = Hyphen. Id != Hyphen. OK. *)
        rule (EdgeOpt, [])
             (fun _ => None);
 
        (* --- FLEXIBLE ARROWS --- *)
-       (* Op -> Hyphen OpTail *)
        rule (Op, [T Hyphen; NT OpTail]) (fun _ => tt);
-
-       (* OpTail -> Arrow *)
        rule (OpTail, [T Arrow]) (fun _ => tt);
-       
-       (* OpTail -> Hyphen OpTail *)
        rule (OpTail, [T Hyphen; NT OpTail]) (fun _ => tt);
-       
-       (* OpTail -> epsilon *)
-       (* Allows "-" or "--" as valid edge connectors *)
        rule (OpTail, []) (fun _ => tt);
 
 
        (* --- PATH --- *)
-       (* Path -> Unit PathTail *)
        rule (Path, [NT Unit; NT PathTail])
             (fun args => match args with (u, (tail, _)) => u :: tail end);
 
-       (* PathTail -> . Path *)
        rule (PathTail, [T Dot; NT Path])
             (fun args => match args with (_, (p, _)) => p end);
             
-       (* PathTail -> epsilon *)
        rule (PathTail, [])
             (fun _ => []);
 
@@ -263,7 +255,6 @@ Module Import PG := Make G.
 
 Definition input : string := "std.io -> sys.net"%string.
 
-(* Expected: inr (List of [GArc ["std";"io"] ["sys";"net"]]) *)
 Compute (match parseTableOf welkin_grammar with
          | inl msg => inl msg
          | inr tbl => inr (parse tbl (NT Start) (tokenize input))
