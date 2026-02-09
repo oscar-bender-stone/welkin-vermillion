@@ -1,6 +1,8 @@
-# Vermillion
+# Welkin Vermillion
 
-## LL(1) parser generator verified in Coq
+## Experiments for the Welkin LL(1) Grammar
+
+Modified under the BSD-3 license clause.
 
 This project has been tested with Coq version 8.19.2.
 

@@ -32,7 +32,7 @@ Module Welkin_Types <: SYMBOL_TYPES.
   Definition terminal := terminal'.
   
   Inductive nonterminal' :=
-  | Term | Arc | Graph.
+  | Terms | Term | Arc | Graph.
   
   Definition nonterminal := nonterminal'.
 
@@ -57,6 +57,7 @@ Module Welkin_Types <: SYMBOL_TYPES.
 
   Definition showNT (x : nonterminal) : string :=
     match x with
+    | Terms => "Terms"
     | Term => "Term"
     | Arc => "Arc"
     | Graph => "Graph"
@@ -74,7 +75,35 @@ Module Welkin_Types <: SYMBOL_TYPES.
 
 End Welkin_Types.
 
-(*Print nullable_gamma.*)
+
+Module Export G <: Grammar.T.
+  Module Export SymTy := Welkin_Types.
+  Module Export Defs  := DefsFn SymTy.
+End G.
+
+Module Export Gen := GeneratorFn G.
+
+Definition g311 : grammar :=
+  {| start := Terms;
+     prods := []
+  |}.
+
+(* Now we create a module that gives us access to
+   the top-level parser generator functions:
+
+   parseTableOf : grammar -> option parse_table
+
+   parse : parse_table -> symbol -> list terminal -> 
+           sum parse_failure (tree * list terminal) *)
+Module Import PG := Make G.
+
+Definition tok (a : terminal) (v : t_semty a) : token :=
+  existT _ a v.
+
+Definition example_prog : list token :=
+  [tok LeftBracket tt; tok RightBracket tt].
+
+Print nullable_gamma.
 
 
 
