@@ -16,49 +16,53 @@ Import ListNotations.
 Open Scope string_scope.
 
 (* ========================================================================== *)
-(* 1. AST (Renamed to avoid 'Graph' keyword collisions)                       *)
+(* 1. AST                                                                     *)
 (* ========================================================================== *)
 
-(* Recursive Graph structure: Name + Contents *)
-Inductive WGraph :=
-| MkGraph (name : string) (contents : list WGraph).
+(* Renamed WGraph -> WIG (Welkin Import Graph) *)
+(* depth: counts the number of leading dots (relative import) *)
+Inductive WIG :=
+| MkWIG (name : string) (depth : nat) (contents : list WIG).
 
-(* Graph Elements: Nodes or Arcs between Graphs *)
-Inductive Welem :=
-| WNode (g : WGraph)
-| WArc  (src : WGraph) (dst : WGraph).
+(* Renamed Welem -> WStmt (Welkin Statement) *)
+Inductive WStmt :=
+| WNode (g : WIG)
+| WArc  (op : string) (src : WIG) (dst : WIG).
 
-Definition result_list := list Welem.
-
-(* Helper: Converts ["std"; "io"] -> MkGraph "std" [MkGraph "io" []] *)
-Fixpoint path_to_wgraph (p : list string) : WGraph :=
+(* Helper to construct WIG from path data *)
+(* d: depth, p: list of segments *)
+Fixpoint path_to_wig (d : nat) (p : list string) : WIG :=
   match p with
-  | [] => MkGraph "" [] (* Should not occur with valid grammar *)
-  | [x] => MkGraph x []
-  | x :: xs => MkGraph x [path_to_wgraph xs]
+  | [] => MkWIG "" 0 [] (* Should not happen in valid parse *)
+  | [x] => MkWIG x d []
+  | x :: xs => MkWIG x d [path_to_wig 0 xs]
   end.
 
 (* ========================================================================== *)
-(* 2. INTERFACE                                                               *)
+(* 2. GRAMMAR SYMBOLS                                                         *)
 (* ========================================================================== *)
 
 Inductive terminal_def :=
-| TokId
-| Dot | Hyphen | Arrow 
-| Space | Tab | CR | LF.
+| TokId       (* Identifiers *)
+| TokDot      (* . *)
+| TokHyphen   (* - *)
+| TokArrow    (* -> *)
+| TokComma.   (* , *)
 
 Inductive nonterminal_def :=
-| Start         
-| ElemList      (* List of elements (nodes/arcs) *)
-| Term          (* A single element *)
-| EdgeOpt       (* Optional edge target *)
-| Op            
-| OpTail        
-| Path          (* Raw list of strings *)
-| PathTail      
-| Unit          
-| Identifier
-| WS.
+| NtRoot        (* Start symbol *)
+| NtStmtList    (* Comma-separated list *)
+| NtChain       (* A path sequence: a -> b -> c *)
+| NtChainTail   (* Recursive tail of chain *)
+| NtPath        (* Full path: ...a.b *)
+| NtRelPrefix   (* Leading dots: ... *)
+| NtPathTail    (* Trailing path: .b.c *)
+| NtSegment     (* Single identifier *)
+| NtEdgeOp.     (* - or -> *)
+
+(* ========================================================================== *)
+(* 3. SEMANTICS                                                               *)
+(* ========================================================================== *)
 
 Definition t_semty_def (a : terminal_def) : Type :=
   match a with
@@ -66,19 +70,21 @@ Definition t_semty_def (a : terminal_def) : Type :=
   | _     => unit
   end.
 
+(* NtChainTail is a function:
+   It receives the WIG node parsed *immediately before* it.
+   It returns a list of WStmts (the Arcs connecting to the next node).
+*)
 Definition nt_semty_def (x : nonterminal_def) : Type :=
   match x with
-  | Start          => result_list
-  | ElemList       => result_list
-  | Term           => Welem
-  | EdgeOpt        => option WGraph 
-  | Op             => unit
-  | OpTail         => unit
-  | Path           => list string
-  | PathTail       => list string
-  | Unit           => string
-  | Identifier     => string
-  | WS             => unit
+  | NtRoot        => list WStmt
+  | NtStmtList    => list WStmt
+  | NtChain       => list WStmt
+  | NtChainTail   => WIG -> list WStmt
+  | NtPath        => (nat * list string)
+  | NtRelPrefix   => nat
+  | NtPathTail    => list string
+  | NtSegment     => string
+  | NtEdgeOp      => string
   end.
 
 Lemma t_eq_dec_def : forall (t t' : terminal_def), {t = t'} + {t <> t'}.
@@ -88,7 +94,7 @@ Lemma nt_eq_dec_def : forall (nt nt' : nonterminal_def), {nt = nt'} + {nt <> nt'
 Proof. decide equality. Defined.
 
 (* ========================================================================== *)
-(* 3. MODULE CONFIGURATION                                                    *)
+(* 4. MODULE BOILERPLATE                                                      *)
 (* ========================================================================== *)
 
 Module Welkin_Types <: SYMBOL_TYPES 
@@ -106,9 +112,8 @@ Module Welkin_Types <: SYMBOL_TYPES
 
   Definition showT (a : terminal) : string := 
     match a with 
-    | TokId => "Id" 
-    | Dot => "." | Hyphen => "-" | Arrow => ">"
-    | Space => "_" | Tab => "\t" | CR => "\r" | LF => "\n"
+    | TokId => "Id" | TokDot => "." | TokHyphen => "-" 
+    | TokArrow => "->" | TokComma => "," 
     end.
   Definition showNT (x : nonterminal) : string := "nt".
 End Welkin_Types.
@@ -121,89 +126,94 @@ End G.
 Module Export Gen := GeneratorFn G.
 
 (* ========================================================================== *)
-(* 4. GRAMMAR DEFINITION                                                      *)
+(* 5. GRAMMAR RULES                                                           *)
 (* ========================================================================== *)
 
 Definition rule := existT action_ty.
 
 Definition welkin_grammar : grammar :=
-  {| start := Start;
+  {| start := NtRoot;
      prods := [
-       (* --- WS --- *)
-       rule (WS, [T Space; NT WS]) (fun _ => tt);
-       rule (WS, [T Tab; NT WS])   (fun _ => tt);
-       rule (WS, [T CR; NT WS])    (fun _ => tt);
-       rule (WS, [T LF; NT WS])    (fun _ => tt);
-       rule (WS, [])               (fun _ => tt);
+       (* --- ROOT --- *)
+       (* Root -> StmtList *)
+       rule (NtRoot, [NT NtStmtList])
+            (fun args => match args with (l, _) => l end);
 
-       (* --- START --- *)
-       rule (Start, [NT WS; NT ElemList])
-            (fun args => match args with (_, (l, _)) => l end);
-
-       (* --- ELEMENT LIST --- *)
-       rule (ElemList, [NT Term; NT ElemList])
-            (fun args => match args with (t, (l, _)) => t :: l end);
-       
-       rule (ElemList, []) 
-            (fun _ => []);
-
-       (* --- TERM --- *)
-       (* Path returns list string. We convert to recursive WGraph here. *)
-       rule (Term, [NT Path; NT WS; NT EdgeOpt]) 
-            (fun args => match args with (raw_p, (_, (opt, _))) => 
-                           let g1 := path_to_wgraph raw_p in
-                           match opt with
-                           | Some g2 => WArc g1 g2
-                           | None    => WNode g1
-                           end
+       (* --- STATEMENT LIST --- *)
+       (* StmtList -> Chain , StmtList *)
+       (* NOTE: Requires trailing comma for the last element or separated list *)
+       rule (NtStmtList, [NT NtChain; T TokComma; NT NtStmtList])
+            (fun args => match args with (head_stmts, (_, (rest, _))) => 
+                           head_stmts ++ rest 
                          end);
 
-       (* --- EDGE --- *)
-       (* EdgeOpt returns option WGraph *)
-       rule (EdgeOpt, [NT Op; NT WS; NT Path; NT WS])
-            (fun args => match args with (_, (_, (raw_p, (_, _)))) => 
-                           Some (path_to_wgraph raw_p) 
+       (* StmtList -> epsilon *)
+       rule (NtStmtList, []) (fun _ => []);
+
+       (* --- CHAIN --- *)
+       (* Chain -> Path ChainTail *)
+       (* Example: "a -> b". Path parses "a". ChainTail uses "a" to link "b". *)
+       rule (NtChain, [NT NtPath; NT NtChainTail])
+            (fun args => match args with ((d, p), (tail_fn, _)) => 
+                           let start_wig := path_to_wig d p in
+                           (* The result is the Start Node + any Arcs/Nodes generated by the tail *)
+                           (WNode start_wig) :: (tail_fn start_wig)
                          end);
 
-       rule (EdgeOpt, [])
-            (fun _ => None);
+       (* --- CHAIN TAIL --- *)
+       (* ChainTail -> EdgeOp Path ChainTail *)
+       rule (NtChainTail, [NT NtEdgeOp; NT NtPath; NT NtChainTail])
+            (fun args => match args with (op, ((d, p), (tail_fn, _))) => 
+                           fun prev_wig =>
+                             let curr_wig := path_to_wig d p in
+                             let arc := WArc op prev_wig curr_wig in
+                             (* Return: Arc(prev,curr) :: Node(curr) :: Recurse(curr) *)
+                             arc :: (WNode curr_wig) :: (tail_fn curr_wig)
+                         end);
 
-       (* --- FLEXIBLE ARROWS --- *)
-       rule (Op, [T Hyphen; NT OpTail]) (fun _ => tt);
-       rule (OpTail, [T Arrow]) (fun _ => tt);
-       rule (OpTail, [T Hyphen; NT OpTail]) (fun _ => tt);
-       rule (OpTail, []) (fun _ => tt);
-
+       (* ChainTail -> epsilon *)
+       rule (NtChainTail, [])
+            (fun _ => fun _ => []);
 
        (* --- PATH --- *)
-       rule (Path, [NT Unit; NT PathTail])
-            (fun args => match args with (u, (tail, _)) => u :: tail end);
+       (* Path -> RelPrefix Segment PathTail *)
+       rule (NtPath, [NT NtRelPrefix; NT NtSegment; NT NtPathTail])
+            (fun args => match args with (d, (s, (tail, _))) => (d, s :: tail) end);
 
-       rule (PathTail, [T Dot; NT Path])
-            (fun args => match args with (_, (p, _)) => p end);
+       (* --- RELATIVE PREFIX --- *)
+       (* Recursively count dots at the start *)
+       rule (NtRelPrefix, [T TokDot; NT NtRelPrefix])
+            (fun args => match args with (_, (n, _)) => S n end);
             
-       rule (PathTail, [])
-            (fun _ => []);
+       rule (NtRelPrefix, []) (fun _ => 0);
 
-       (* --- PRIMITIVES --- *)
-       rule (Unit, [NT Identifier]) 
-            (fun args => match args with (s, _) => s end);
+       (* --- PATH TAIL --- *)
+       (* Parses .b.c -- STRICTLY one dot per segment *)
+       rule (NtPathTail, [T TokDot; NT NtSegment; NT NtPathTail])
+            (fun args => match args with (_, (s, (tail, _))) => s :: tail end);
+            
+       rule (NtPathTail, []) (fun _ => []);
 
-       rule (Identifier, [T TokId]) 
-            (fun args => match args with (s, _) => s end)
+       (* --- HELPERS --- *)
+       rule (NtEdgeOp, [T TokHyphen]) (fun _ => "-"%string);
+       rule (NtEdgeOp, [T TokArrow])  (fun _ => "->"%string);
+       
+       rule (NtSegment, [T TokId]) (fun args => match args with (s, _) => s end)
      ]
   |}.
 
 (* ========================================================================== *)
-(* 5. SCANNER IMPLEMENTATION                                                  *)
+(* 6. SCANNER (IGNORING WHITESPACE)                                           *)
 (* ========================================================================== *)
 
 Definition tok (a : terminal) (v : t_semty a) : token :=
   existT _ a v.
 
-Definition is_structure (c : ascii) : bool :=
+(* Characters that break a string of identifiers *)
+Definition is_delim (c : ascii) : bool :=
   let n := nat_of_ascii c in
-  if (n =? 46)%nat then true (* . *)
+  if (n =? 46)%nat then true      (* . *)
+  else if (n =? 44)%nat then true (* , *)
   else if (n =? 45)%nat then true (* - *)
   else if (n =? 62)%nat then true (* > *)
   else if (n =? 32)%nat then true (* Space *)
@@ -212,11 +222,12 @@ Definition is_structure (c : ascii) : bool :=
   else if (n =? 13)%nat then true (* CR *)
   else false.
 
+(* Helper to consume an alphanumeric identifier *)
 Fixpoint span_ident (s : string) : string * string :=
   match s with
   | EmptyString => ("", "")
   | String c rest =>
-      if is_structure c then ("", s)
+      if is_delim c then ("", s)
       else 
         let (id, remaining) := span_ident rest in
         (String c id, remaining)
@@ -230,17 +241,30 @@ Fixpoint tokenize_aux (fuel : nat) (s : string) : list token :=
     | EmptyString => []
     | String c rest =>
         let code := nat_of_ascii c in
-        if (code =? 46)%nat then tok Dot tt :: tokenize_aux n rest
-        else if (code =? 45)%nat then tok Hyphen tt :: tokenize_aux n rest
-        else if (code =? 62)%nat then tok Arrow tt :: tokenize_aux n rest
-        else if (code =? 32)%nat then tok Space tt :: tokenize_aux n rest
-        else if (code =? 9)%nat  then tok Tab tt :: tokenize_aux n rest
-        else if (code =? 10)%nat then tok LF tt :: tokenize_aux n rest
-        else if (code =? 13)%nat then tok CR tt :: tokenize_aux n rest
+        (* WHITESPACE: Skip and Recurse *)
+        if (code =? 32)%nat then tokenize_aux n rest
+        else if (code =? 9)%nat  then tokenize_aux n rest
+        else if (code =? 10)%nat then tokenize_aux n rest
+        else if (code =? 13)%nat then tokenize_aux n rest
+        
+        (* SYMBOLS *)
+        else if (code =? 46)%nat then tok TokDot tt :: tokenize_aux n rest
+        else if (code =? 44)%nat then tok TokComma tt :: tokenize_aux n rest
+        (* HYPHEN or ARROW *)
+        else if (code =? 45)%nat then 
+             match rest with
+             | String c2 rest2 => 
+               if (nat_of_ascii c2 =? 62)%nat 
+               then tok TokArrow tt :: tokenize_aux n rest2 (* -> *)
+               else tok TokHyphen tt :: tokenize_aux n rest (* - *)
+             | EmptyString => tok TokHyphen tt :: []
+             end
+        
+        (* IDENTIFIERS *)
         else 
           let (id, remaining) := span_ident s in
           match id with
-          | EmptyString => tokenize_aux n rest
+          | EmptyString => tokenize_aux n rest (* Should be covered by delim check, but safety *)
           | _ => tok TokId id :: tokenize_aux n remaining
           end
     end
@@ -253,9 +277,12 @@ Module Import PG := Make G.
 
 (* --- Execution --- *)
 
-Definition input : string := "std.io -> sys.net"%string.
+(* Input: "a - b -> c, d," 
+   Note: Whitespace is now irrelevant.
+*)
+Definition input : string := "a - b -> c, d,"%string.
 
 Compute (match parseTableOf welkin_grammar with
          | inl msg => inl msg
-         | inr tbl => inr (parse tbl (NT Start) (tokenize input))
+         | inr tbl => inr (parse tbl (NT NtRoot) (tokenize input))
          end).
