@@ -28,7 +28,7 @@ Inductive graph_elem :=
 Definition graph := list graph_elem.
 
 (* ========================================================================== *)
-(* 2. INTERFACE (Scanner Agnostic)                                            *)
+(* 2. INTERFACE                                                               *)
 (* ========================================================================== *)
 
 Inductive terminal_def :=
@@ -37,11 +37,13 @@ Inductive terminal_def :=
 | Space | Tab | CR | LF.
 
 Inductive nonterminal_def :=
-| Terms | Term | Path | Unit
+| Terms | TermsTail 
+| Term  | TermTail  
+| Path  | PathTail  
+| Unit
 | Identifier
 | WS.
 
-(* Map terminals to their runtime payload types. *)
 Definition t_semty_def (a : terminal_def) : Type :=
   match a with
   | TokId => string
@@ -51,8 +53,11 @@ Definition t_semty_def (a : terminal_def) : Type :=
 Definition nt_semty_def (x : nonterminal_def) : Type :=
   match x with
   | Terms          => graph
+  | TermsTail      => graph
   | Term           => graph_elem
+  | TermTail       => option path 
   | Path           => path
+  | PathTail       => path
   | Unit           => string
   | Identifier     => string
   | WS             => unit
@@ -81,8 +86,13 @@ Module Welkin_Types <: SYMBOL_TYPES
   Definition t_eq_dec := t_eq_dec_def.
   Definition nt_eq_dec := nt_eq_dec_def.
 
+  (* Better debug printing to avoid confusing "tok" messages *)
   Definition showT (a : terminal) : string := 
-    match a with TokId => "id" | _ => "tok" end.
+    match a with 
+    | TokId => "Id" 
+    | Dot => "." | Comma => "," | Hyphen => "-" | Arrow => "->"
+    | Space => "SPC" | Tab => "TAB" | CR => "CR" | LF => "LF"
+    end.
   Definition showNT (x : nonterminal) : string := "nt".
 End Welkin_Types.
 
@@ -102,36 +112,67 @@ Definition rule := existT action_ty.
 Definition welkin_grammar : grammar :=
   {| start := Terms;
      prods := [
-       (* WS *)
+       (* --- WS --- *)
+       (* Standard greedy whitespace consumer *)
        rule (WS, [T Space; NT WS]) (fun _ => tt);
        rule (WS, [T Tab; NT WS])   (fun _ => tt);
        rule (WS, [T CR; NT WS])    (fun _ => tt);
        rule (WS, [T LF; NT WS])    (fun _ => tt);
        rule (WS, [])               (fun _ => tt);
 
-       (* Terms *)
-       rule (Terms, [NT WS; NT Term; NT WS; NT Terms]) 
-            (fun args => match args with (_, (t, (_, (ts, _)))) => t :: ts end);
-       rule (Terms, [NT WS]) 
+       (* --- TERMS --- *)
+       (* Structure: WS (Term WS)* *)
+       (* This avoids the "WS WS" collision by ensuring WS only appears AFTER a term in the loop *)
+
+       (* Terms -> WS TermsTail *)
+       rule (Terms, [NT WS; NT TermsTail])
+            (fun args => match args with (_, (tail, _)) => tail end);
+
+       (* TermsTail -> Term WS TermsTail *)
+       (* Recursively eat Term then WS *)
+       rule (TermsTail, [NT Term; NT WS; NT TermsTail]) 
+            (fun args => match args with (t, (_, (ts, _))) => t :: ts end);
+       
+       (* TermsTail -> epsilon *)
+       rule (TermsTail, []) 
             (fun _ => []);
 
-       (* Term *)
-       rule (Term, [NT Path; T Hyphen; T Arrow; NT Path]) 
-            (fun args => match args with (p1, (_, (_, (p2, _)))) => GArc p1 p2 end);
-       rule (Term, [NT Path]) 
-            (fun args => match args with (p, _) => GNode p end);
+       (* --- TERM --- *)
+       (* Term -> Path TermTail *)
+       rule (Term, [NT Path; NT TermTail]) 
+            (fun args => match args with (p1, (tail, _)) => 
+                           match tail with
+                           | Some p2 => GArc p1 p2
+                           | None    => GNode p1
+                           end
+                         end);
 
-       (* Path *)
-       rule (Path, [NT Unit; T Dot; NT Path]) 
-            (fun args => match args with (u, (_, (p, _))) => u :: p end);
-       rule (Path, [NT Unit]) 
-            (fun args => match args with (u, _) => [u] end);
+       (* TermTail -> -> Path *)
+       rule (TermTail, [T Hyphen; T Arrow; NT Path])
+            (fun args => match args with (_, (_, (p2, _))) => Some p2 end);
 
-       (* Unit *)
+       (* TermTail -> epsilon *)
+       rule (TermTail, [])
+            (fun _ => None);
+
+       (* --- PATH --- *)
+       (* Path -> Unit PathTail *)
+       rule (Path, [NT Unit; NT PathTail])
+            (fun args => match args with (u, (tail, _)) => u :: tail end);
+
+       (* PathTail -> . Path *)
+       (* Note: Reusing Path here works because Path handles the next unit *)
+       rule (PathTail, [T Dot; NT Path])
+            (fun args => match args with (_, (p, _)) => p end);
+            
+       (* PathTail -> epsilon *)
+       rule (PathTail, [])
+            (fun _ => []);
+
+       (* --- PRIMITIVES --- *)
        rule (Unit, [NT Identifier]) 
             (fun args => match args with (s, _) => s end);
 
-       (* Identifier: Bridges Grammar to Scanner via TokId *)
        rule (Identifier, [T TokId]) 
             (fun args => match args with (s, _) => s end)
      ]
@@ -144,20 +185,18 @@ Definition welkin_grammar : grammar :=
 Definition tok (a : terminal) (v : t_semty a) : token :=
   existT _ a v.
 
-(* Numeric comparison prevents char_scope/string_scope ambiguity *)
 Definition is_structure (c : ascii) : bool :=
   let n := nat_of_ascii c in
-  if (n =? 46)%nat then true (* . *)
-  else if (n =? 44)%nat then true (* , *)
-  else if (n =? 45)%nat then true (* - *)
-  else if (n =? 62)%nat then true (* > *)
-  else if (n =? 32)%nat then true (* Space *)
-  else if (n =? 9)%nat  then true (* Tab *)
-  else if (n =? 10)%nat then true (* LF *)
-  else if (n =? 13)%nat then true (* CR *)
+  if (n =? 46)%nat then true
+  else if (n =? 44)%nat then true
+  else if (n =? 45)%nat then true
+  else if (n =? 62)%nat then true
+  else if (n =? 32)%nat then true
+  else if (n =? 9)%nat  then true
+  else if (n =? 10)%nat then true
+  else if (n =? 13)%nat then true
   else false.
 
-(* Consumes characters until a structure char is found *)
 Fixpoint span_ident (s : string) : string * string :=
   match s with
   | EmptyString => ("", "")
@@ -168,37 +207,41 @@ Fixpoint span_ident (s : string) : string * string :=
         (String c id, remaining)
   end.
 
-Fixpoint tokenize (s : string) : list token :=
-  match s with
-  | EmptyString => []
-  | String c rest =>
-      let n := nat_of_ascii c in
-      (* Check structure tokens first *)
-      if (n =? 46)%nat then tok Dot tt :: tokenize rest
-      else if (n =? 44)%nat then tok Comma tt :: tokenize rest
-      else if (n =? 45)%nat then tok Hyphen tt :: tokenize rest
-      else if (n =? 62)%nat then tok Arrow tt :: tokenize rest
-      else if (n =? 32)%nat then tok Space tt :: tokenize rest
-      else if (n =? 9)%nat  then tok Tab tt :: tokenize rest
-      else if (n =? 10)%nat then tok LF tt :: tokenize rest
-      else if (n =? 13)%nat then tok CR tt :: tokenize rest
-      else 
-        (* Lex identifier using maximal munch *)
-        let (id, remaining) := span_ident s in
-        (* If id is empty but we aren't at structure/EOF, consume 1 char to advance (error recovery) 
-           or treat as identifier. Here we assume valid id chars. *)
-        match id with
-        | EmptyString => tokenize remaining (* Skip unknown char *)
-        | _ => tok TokId id :: tokenize remaining
-        end
+Fixpoint tokenize_aux (fuel : nat) (s : string) : list token :=
+  match fuel with
+  | 0 => []
+  | S n =>
+    match s with
+    | EmptyString => []
+    | String c rest =>
+        let code := nat_of_ascii c in
+        if (code =? 46)%nat then tok Dot tt :: tokenize_aux n rest
+        else if (code =? 44)%nat then tok Comma tt :: tokenize_aux n rest
+        else if (code =? 45)%nat then tok Hyphen tt :: tokenize_aux n rest
+        else if (code =? 62)%nat then tok Arrow tt :: tokenize_aux n rest
+        else if (code =? 32)%nat then tok Space tt :: tokenize_aux n rest
+        else if (code =? 9)%nat  then tok Tab tt :: tokenize_aux n rest
+        else if (code =? 10)%nat then tok LF tt :: tokenize_aux n rest
+        else if (code =? 13)%nat then tok CR tt :: tokenize_aux n rest
+        else 
+          let (id, remaining) := span_ident s in
+          match id with
+          | EmptyString => tokenize_aux n rest
+          | _ => tok TokId id :: tokenize_aux n remaining
+          end
+    end
   end.
+
+Definition tokenize (s : string) : list token :=
+  tokenize_aux (String.length s) s.
 
 Module Import PG := Make G.
 
 (* --- Execution --- *)
 
-Definition input : string := "std.io -> sys.net"%string.
+Definition input : string := "std.io --> sys.net"%string.
 
+(* Should now return (inr [...]) with the parsed graph *)
 Compute (match parseTableOf welkin_grammar with
          | inl msg => inl msg
          | inr tbl => inr (parse tbl (NT Terms) (tokenize input))
