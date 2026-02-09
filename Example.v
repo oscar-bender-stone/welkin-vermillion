@@ -1,216 +1,213 @@
+(* SPDX-FileCopyrightText: 2026 Oscar Bender-Stone <oscar-bender-stone@protonmail.com> *)
+(* SPDX-FileContributor: Gemini (Google) *)
+(* SPDX-License-Identifier: BSD-3-Clause*)
+
+
 Require Import String.
+Require Import Ascii.
+Require Import List.
+Require Import ZArith.
+Require Import PeanoNat. (* Required for =? operator *)
+(* Adjust imports to match your setup *)
 Require Import Grammar.
 Require Import Main.
 Require Import Generator.
-Require Import ZArith.
 
+Import ListNotations.
 Open Scope string_scope.
+Open Scope char_scope.
 
-(*
-Original, naive grammar:
- 
-    start ::= (term ",")* term
-    term ::= arc | graph | base
-    arc ::= (term "-" term "->")+ term
-          | (term "<-" term "-")+ term
-          | (term "-" term "-")+ term
-    graph ::= unit? "{" term* "}"
-    base ::= unit | string
-    unit ::= int
-*)
+(* ========================================================================== *)
+(* 1. THE AST (Graph)                                                         *)
+(* ========================================================================== *)
 
-Inductive graph :=
-| contents: list graph -> graph
-| arc: graph * graph * graph -> graph.
+Definition path := list string.
 
-Definition empty_graph := contents [].
+Inductive graph_elem :=
+| GNode (p : path)                 (* "a.b" *)
+| GArc  (src : path) (dst : path). (* "a -> b" *)
 
-Module Welkin_Types <: SYMBOL_TYPES. 
-  Inductive terminal' :=
-  | Comma
-  | Hyphen | ArrowLeft | ArrowRight
-  | LeftBracket | RightBracket
-  | String | Int.
-  
-  Definition terminal := terminal'.
-  
-  Inductive nonterminal' :=
-  | Graph | UnitOpt
-  | Terms | TermChain | TermChainEnd | Term   (* List Logic *)
-  | Arc
-  | ArcStartDecision    (* Was ArcTail: Decides between '<-' and '-' *)
-  | ArcRightOrEdge      (* Was ArcHyphenSplit: Decides between '->' and '-' *)
-  | ArcLArrowChain      (* The rest of the ( ... <- ... - ) chain *)
-  | ArcLArrowLoop       (* The repeating part of the LArrow chain *)
-  | ArcRArrowChain      (* The rest of the ( ... - ... -> ) chain *)
-  | ArcRArrowLoop       (* The repeating part of the RArrow chain *)
-  | ArcEdgeChain        (* The rest of the ( ... - ... - ) chain *)
-  | ArcEdgeLoop         (* The repeating part of the Edge chain *)
-  | Base | Unit.
-  
-  Definition nonterminal := nonterminal'.
+Definition graph := list graph_elem.
 
-  Lemma t_eq_dec : forall (t t' : terminal),
-      {t = t'} + {t <> t'}.
-  Proof. decide equality. Defined.
-  
-  Lemma nt_eq_dec : forall (nt nt' : nonterminal),
-      {nt = nt'} + {nt <> nt'}.
-  Proof. decide equality. Defined.
+(* ========================================================================== *)
+(* 2. GLOBAL TYPE DEFINITIONS                                                 *)
+(* ========================================================================== *)
 
-  Definition showT (a : terminal) : string :=
-    match a with
-    | Comma    => ","
-    | Hyphen => "-"
-    | ArrowLeft => "->"
-    | ArrowRight => "<-"
-    | LeftBracket => "{"
-    | RightBracket => "}"
-    | String => "String"
-    | Int => "Int"
-    end.
+Inductive terminal_def :=
+| RawChar (c : ascii)
+| Dot | Comma | Hyphen | Arrow 
+| Space | Tab | CR | LF.
 
-  Definition showNT (x : nonterminal) : string :=
-    match x with
-    | Graph            => "Graph"
-    | UnitOpt          => "UnitOpt"
-    | Terms            => "Terms"
-    | TermChain        => "TermChain"
-    | TermChainEnd     => "TermChainEnd"
-    | Term             => "Term"
-    | Arc              => "Arc"
-    | ArcStartDecision => "ArcStartDecision"
-    | ArcRightOrEdge   => "ArcRightOrEdge"
-    | ArcLArrowChain   => "ArcLArrowChain"
-    | ArcLArrowLoop    => "ArcLArrowLoop"
-    | ArcRArrowChain   => "ArcRArrowChain"
-    | ArcRArrowLoop    => "ArcRArrowLoop"
-    | ArcEdgeChain     => "ArcEdgeChain"
-    | ArcEdgeLoop      => "ArcEdgeLoop"
-    | Base             => "Base"
-    | Unit             => "Unit"
-    end. 
-  (* A Num token carries a natural number -- no other token
-     carries a meaningful semantic value. *)
-  Definition t_semty (a : terminal) : Type :=
-    match a with
-    | String => string
-    | Int => Z
-    | _  => unit
-    end.
+Inductive nonterminal_def :=
+| Terms | Term | Path | Unit
+| Identifier | IdentifierChar
+| WS.
 
-  Definition nt_semty (x : nonterminal) : Type := graph.
+Definition t_semty_def (a : terminal_def) : Type :=
+  match a with
+  | RawChar _ => ascii
+  | _ => unit
+  end.
 
+Definition nt_semty_def (x : nonterminal_def) : Type :=
+  match x with
+  | Terms          => graph
+  | Term           => graph_elem
+  | Path           => path
+  | Unit           => string
+  | Identifier     => string
+  | IdentifierChar => ascii
+  | WS             => unit
+  end.
+
+Lemma t_eq_dec_def : forall (t t' : terminal_def), {t = t'} + {t <> t'}.
+Proof. decide equality. apply ascii_dec. Defined.
+
+Lemma nt_eq_dec_def : forall (nt nt' : nonterminal_def), {nt = nt'} + {nt <> nt'}.
+Proof. decide equality. Defined.
+
+(* ========================================================================== *)
+(* 3. THE MODULES                                                             *)
+(* ========================================================================== *)
+
+Module Welkin_Types <: SYMBOL_TYPES 
+  with Definition terminal := terminal_def
+  with Definition nonterminal := nonterminal_def
+  with Definition t_semty := t_semty_def
+  with Definition nt_semty := nt_semty_def.
+
+  Definition terminal := terminal_def.
+  Definition nonterminal := nonterminal_def.
+  Definition t_semty := t_semty_def.
+  Definition nt_semty := nt_semty_def.
+
+  Definition t_eq_dec := t_eq_dec_def.
+  Definition nt_eq_dec := nt_eq_dec_def.
+
+  Definition showT (a : terminal) : string := "tok".
+  Definition showNT (x : nonterminal) : string := "nt".
 End Welkin_Types.
 
-
-Module Export G <: Grammar.T.
+Module Export G <: Grammar.T 
+  with Module SymTy := Welkin_Types.
   Module Export SymTy := Welkin_Types.
   Module Export Defs  := DefsFn SymTy.
 End G.
-
 Module Export Gen := GeneratorFn G.
+
+(* ========================================================================== *)
+(* 4. GRAMMAR DEFINITION                                                      *)
+(* ========================================================================== *)
 
 Definition rule := existT action_ty.
 
+(* Meta-programming for Chars *)
+Definition all_ascii : list ascii :=
+  let fix loop n := match n with 0 => [] | S m => ascii_of_nat m :: loop m end in loop 256.
+
+(* Robust Char Identification (avoid pattern matching errors) *)
+Definition is_structure (c : ascii) : bool :=
+  let n := nat_of_ascii c in
+  if (n =? 46)%nat then true (* . *)
+  else if (n =? 44)%nat then true (* , *)
+  else if (n =? 45)%nat then true (* - *)
+  else if (n =? 62)%nat then true (* > *)
+  else if (n =? 32)%nat then true (* Space *)
+  else if (n =? 9)%nat  then true (* Tab *)
+  else if (n =? 10)%nat then true (* LF *)
+  else if (n =? 13)%nat then true (* CR *)
+  else false.
+
+Definition valid_ident_chars : list ascii :=
+  List.filter (fun c => negb (is_structure c)) all_ascii.
+
+Definition make_char_rules : list production :=
+  List.map (fun c => 
+    rule (IdentifierChar, [T (RawChar c)]) 
+         (fun args => match args with (v, _) => v end)
+  ) valid_ident_chars.
+
 Definition welkin_grammar : grammar :=
-  {| start := Terms;  (* <--- FIXED: Start is now the list of terms *)
+  {| start := Terms;
      prods := [
+       (* WS *)
+       rule (WS, [T Space; NT WS]) (fun _ => tt);
+       rule (WS, [T Tab; NT WS])   (fun _ => tt);
+       rule (WS, [T CR; NT WS])    (fun _ => tt);
+       rule (WS, [T LF; NT WS])    (fun _ => tt);
+       rule (WS, [])               (fun _ => tt);
 
-       (* --- TERMS (Comma List) --- *)
-       (* Matches: epsilon | term | term, term | term, *)
-       
-       (* Terms := Term TermChain | epsilon *)
-       (* If input is empty, we match epsilon. If we see a Term start, we parse Term. *)
-       rule (Terms, [NT Term; NT TermChain]) (fun x => empty_graph);
-       rule (Terms, [])                      (fun x => empty_graph);
+       (* Terms *)
+       rule (Terms, [NT WS; NT Term; NT WS; NT Terms]) 
+            (fun args => match args with (_, (t, (_, (ts, _)))) => t :: ts end);
+            
+       rule (Terms, [NT WS]) 
+            (fun _ => []);
 
-       (* TermChain := "," TermChainEnd | epsilon *)
-       (* After a term, if we see a comma, consume it. If not, we are done. *)
-       rule (TermChain, [T Comma; NT TermChainEnd]) (fun x => empty_graph);
-       rule (TermChain, [])                         (fun x => empty_graph);
+       (* Term: Arc *)
+       rule (Term, [NT Path; T Hyphen; T Arrow; NT Path]) 
+            (fun args => match args with (p1, (_, (_, (p2, _)))) => GArc p1 p2 end);
 
-       (* TermChainEnd := Terms *)
-       (* After the comma, we loop back to Terms. *)
-       (* If there is another term, Terms parses it. *)
-       (* If the input ends (trailing comma), Terms parses epsilon. *)
-       rule (TermChainEnd, [NT Terms]) (fun x => empty_graph);
+       (* Term: Node *)
+       rule (Term, [NT Path]) 
+            (fun args => match args with (p, _) => GNode p end);
 
+       (* Path: Unit . Path *)
+       rule (Path, [NT Unit; T Dot; NT Path]) 
+            (fun args => match args with (u, (_, (p, _))) => u :: p end);
+            
+       (* Path: Unit *)
+       rule (Path, [NT Unit]) 
+            (fun args => match args with (u, _) => [u] end);
 
-       (* --- ARC (Decision Tree) --- *)
-       (* 1. Arc := Term ArcStartDecision *)
-       rule (Arc, [NT Term; NT ArcStartDecision])
-         (fun x => empty_graph);
+       (* Identifier *)
+       rule (Identifier, [NT IdentifierChar; NT Identifier]) 
+            (fun args => match args with (c, (s, _)) => String c s end);
 
-       (* 2. ArcStartDecision: Check token after first term *)
-       rule (ArcStartDecision, [T ArrowLeft; NT Term; T Hyphen; NT ArcLArrowChain])
-         (fun x => empty_graph);
-       rule (ArcStartDecision, [T Hyphen; NT Term; NT ArcRightOrEdge])
-         (fun x => empty_graph);
+       rule (Identifier, [NT IdentifierChar]) 
+            (fun args => match args with (c, _) => String c EmptyString end);
 
-       (* 3. ArcRightOrEdge: Check token after "term - term" *)
-       rule (ArcRightOrEdge, [T ArrowRight; NT ArcRArrowChain])
-         (fun x => empty_graph);
-       rule (ArcRightOrEdge, [T Hyphen; NT ArcEdgeChain])
-         (fun x => empty_graph);
+       (* Unit *)
+       rule (Unit, [NT Identifier]) 
+            (fun args => match args with (s, _) => s end)
 
-
-       (* --- ARC CHAINS (Loops) --- *)
-
-       (* -- Left Arrow Chain (Uses <-) -- *)
-       rule (ArcLArrowChain, [NT Term; NT ArcLArrowLoop]) (fun x => empty_graph);
-       rule (ArcLArrowLoop, [T ArrowLeft; NT Term; T Hyphen; NT ArcLArrowChain])
-            (fun x => empty_graph);
-       rule (ArcLArrowLoop, []) (fun x => empty_graph); 
-
-
-       (* -- Right Arrow Chain (Uses ->) -- *)
-       rule (ArcRArrowChain, [NT Term; NT ArcRArrowLoop]) (fun x => empty_graph);
-       rule (ArcRArrowLoop, [T Hyphen; NT Term; T ArrowRight; NT ArcRArrowChain])
-            (fun x => empty_graph);
-       rule (ArcRArrowLoop, []) (fun x => empty_graph); 
-
-
-       (* -- Edge Chain (Uses -) -- *)
-       rule (ArcEdgeChain, [NT Term; NT ArcEdgeLoop]) (fun x => empty_graph);
-       rule (ArcEdgeLoop, [T Hyphen; NT Term; T Hyphen; NT ArcEdgeChain])
-            (fun x => empty_graph);
-       rule (ArcEdgeLoop, []) (fun x => empty_graph);
-
-
-       (* --- BASIC DEFINITIONS --- *)
-       rule (Base, [NT Unit])   (fun x => empty_graph);
-       rule (Base, [T String])  (fun x => empty_graph);
-       rule (Unit, [T Int])     (fun x => empty_graph);
-
-       (* Note: Term logic here assumes a Term is enclosed in braces or is a base unit *)
-       (* Adjust this rule if a "Term" is just a Base/Arc without brackets *)
-       rule (Term, [T LeftBracket; T RightBracket])
-         (fun x => empty_graph)
-    ]
+     ] ++ make_char_rules
   |}.
 
-(* Now we create a module that gives us access to
-   the top-level parser generator functions:
-
-   parseTableOf : grammar -> option parse_table
-
-   parse : parse_table -> symbol -> list terminal -> 
-           sum parse_failure (tree * list terminal) *)
-Module Import PG := Make G.
+(* ========================================================================== *)
+(* 5. TOKENIZER                                                               *)
+(* ========================================================================== *)
 
 Definition tok (a : terminal) (v : t_semty a) : token :=
   existT _ a v.
 
-Definition welkin_example : list token :=
-  [tok LeftBracket tt; tok RightBracket tt].
+(* Robust Tokenizer using numeric checks *)
+Definition char_to_token (c : ascii) : token :=
+  let n := nat_of_ascii c in
+  if (n =? 46)%nat then tok Dot tt
+  else if (n =? 44)%nat then tok Comma tt
+  else if (n =? 45)%nat then tok Hyphen tt
+  else if (n =? 62)%nat then tok Arrow tt
+  else if (n =? 32)%nat then tok Space tt
+  else if (n =? 9)%nat  then tok Tab tt
+  else if (n =? 10)%nat then tok LF tt
+  else if (n =? 13)%nat then tok CR tt
+  else tok (RawChar c) c.
+
+Fixpoint tokenize (s : string) : list token :=
+  match s with
+  | EmptyString => []
+  | String c s' => char_to_token c :: tokenize s'
+  end.
+
+Module Import PG := Make G.
+
+(* --- Execution --- *)
+
+(* The %string delimiter forces Coq to read this as a string, fixing the scope error *)
+Definition input : string := "std.io -> sys.net"%string.
 
 Compute (match parseTableOf welkin_grammar with
          | inl msg => inl msg
-         | inr tbl => inr (parse tbl (NT Terms) welkin_example)
+         | inr tbl => inr (parse tbl (NT Terms) (tokenize input))
          end).
-
-Print nullable_gamma.
-
-
-
