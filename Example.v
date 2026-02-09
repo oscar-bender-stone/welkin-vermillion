@@ -34,7 +34,7 @@ Module Welkin_Types <: SYMBOL_TYPES.
   Definition terminal := terminal'.
   
   Inductive nonterminal' :=
-  | Terms | Term | Arc | Graph.
+  | Terms | TermChain | Term | Arc | Graph | End.
   
   Definition nonterminal := nonterminal'.
 
@@ -60,9 +60,11 @@ Module Welkin_Types <: SYMBOL_TYPES.
   Definition showNT (x : nonterminal) : string :=
     match x with
     | Terms => "Terms"
+    | TermChain => "TermChain"
     | Term => "Term"
     | Arc => "Arc"
     | Graph => "Graph"
+    | End => "End"
     end.
   
   (* A Num token carries a natural number -- no other token
@@ -92,10 +94,21 @@ Definition welkin_grammar : grammar :=
      prods := [
 
       (* terms := term "," terms *)
-      rule (Terms, [NT Term; T Comma; NT Terms])
+      rule (Terms, [NT Term; NT TermChain])
         (fun x => empty_graph);
-      rule (Terms, [NT Term])
+
+      rule (TermChain, [T Comma; NT Term])
         (fun x => empty_graph);
+
+      rule (TermChain, [])
+        (fun x => empty_graph);
+
+      rule (End, [T Comma])
+        (fun x => empty_graph);
+      rule (End, [])
+        (fun x => empty_graph);
+
+      (* terms := arc | graph *)
       rule (Term, [T LeftBracket; T RightBracket])
         (fun x => empty_graph)
     ]
