@@ -9,3 +9,9 @@
 *.cmo
 *.json
 *.eps
+*.vok
+*.vos
+Proofs/*.vok
+Proofs/*.vos
+.lia.cache
+
