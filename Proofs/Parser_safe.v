@@ -1,5 +1,5 @@
+Require Import Lia.
 Require Import List.
-Require Import Omega.
 Require Import String.
 Require Import Wf_nat.
 Require Import Grammar.
@@ -267,7 +267,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
         apply sized_ng_ex in H4.
         destruct H4.
         exists x; exists (x + x0); repeat split; auto.
-        omega.
+        lia.
       + apply IHgamma in H; auto.
         destruct H as [n [n' [Hs [Hs' Hle]]]].
         apply sized_ns_ex in H3.
@@ -275,7 +275,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
         exists n.
         exists (x + n').
         repeat split; auto.
-        omega.
+        lia.
   Qed.
 
   Lemma sized_ns_np :
@@ -295,7 +295,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
       exists n.
       repeat split; auto.
       + econstructor; eauto.
-      + omega.
+      + lia.
     - apply in_app_cons.
   Qed.
 
@@ -335,7 +335,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
         * destruct Hi as [nx [ny' [Hsx [Hsy' Hlt']]]].
           exists nx; exists nz; repeat (split; eauto).
           eapply sized_nullable_sym_det in Hsy'; eauto.
-          omega.
+          lia.
         * eapply nullable_middle_sym; eauto.
   Qed.
 
@@ -366,12 +366,12 @@ Module ParserSafetyFn (Import G : Grammar.T).
       eapply sized_first_sym_np in Hf; eauto.
       destruct Hf as [n [n' [Hf [Hf' Hlt]]]].
       eapply sized_first_sym_det in Hf; eauto.
-      omega.
+      lia.
     - assert (Hns : nullable_sym g (NT x)) by eauto.
       eapply exist_decreasing_nullable_sym_sizes_in_null_path in Hns; eauto.
       destruct Hns as [n [n' [Hs [Hs' Hlt]]]].
       eapply sized_nullable_sym_det in Hs; eauto.
-      omega.
+      lia.
   Qed.
 
   Lemma nullable_path_ex_nt:
@@ -418,14 +418,14 @@ Module ParserSafetyFn (Import G : Grammar.T).
       + invh; auto.
       + step_eq Hp; dms; tc.
         * step_eq Hpf'; dms; tc; invh.
-          left; dlle; omega.
+          left; dlle; lia.
         * step_eq Hpf'; dms; tc; invh.
-          dlle; try (left; omega).
+          dlle; try (left; lia).
           eapply IHsz with (sa := F_arg s)
                            (m  := sa_size (F_arg s)) in Hp;
-            try (simpl; omega).
+            try (simpl; lia).
           eapply IHsz with (sa := G_arg l) in Hpf'; eauto.
-          destruct Hp; destruct Hpf'; try omega; eauto.
+          destruct Hp; destruct Hpf'; try lia; eauto.
   Qed.
 
   Lemma input_length_eq_nullable_sym :
@@ -443,7 +443,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
   Proof.
     intros g tbl s ts vis a v Hle Htbl Hp.
     eapply input_length_lt_or_nullable_sym with (sa := F_arg s) in Hp; eauto.
-    destruct Hp; try omega; auto.
+    destruct Hp; try lia; auto.
   Qed.
 
     Lemma error_conditions :
@@ -509,7 +509,7 @@ Module ParserSafetyFn (Import G : Grammar.T).
       step_eq Hp.
       + invh.
         eapply IHsz with (sa := F_arg s) (m := sa_size (F_arg s)) in Hp;
-          try (simpl; omega); eauto.
+          try (simpl; lia); eauto.
         destruct Hp as [Hin | Hex]; auto.
         left; exists nil; exists s; exists l; split; auto.
       + dms; step_eq Hpf'; dms; tc; invh.

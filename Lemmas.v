@@ -1,4 +1,4 @@
-Require Import Bool FMaps List Omega String MSets.
+Require Import Bool FMaps Lia List String MSets.
 Require Import Grammar Tactics.
 Open Scope list_scope.
 

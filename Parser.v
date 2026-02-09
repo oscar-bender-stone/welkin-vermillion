@@ -1,4 +1,4 @@
-Require Import FMaps List MSets Omega String Program.Wf Arith.Wf_nat.
+Require Import FMaps Lia List MSets String Program.Wf Arith.Wf_nat.
 Require Import Grammar.
 Require Import Lemmas.
 Require Import Tactics.
@@ -154,7 +154,7 @@ Module ParserFn (Import G : Grammar.T).
   Proof.
     intros.
     eapply Acc_inv; eauto.
-    apply thd_lt; simpl; omega.
+    apply thd_lt; simpl; lia.
   Defined.
   
   Lemma hole3 :
@@ -176,7 +176,7 @@ Module ParserFn (Import G : Grammar.T).
   Proof.
     intros.
     eapply Acc_inv; eauto.
-    apply thd_lt; subst; simpl; omega.
+    apply thd_lt; subst; simpl; lia.
   Defined.
   
   Open Scope list_scope.
@@ -228,7 +228,7 @@ Module ParserFn (Import G : Grammar.T).
   Proof.
     intros A xs ys zs H H'; unfold length_lt_eq in *;
       destruct H; destruct H'; subst; auto.
-    left; omega.
+    left; lia.
   Defined.
 
   Definition mismatchMessage (a a' : terminal) : string :=

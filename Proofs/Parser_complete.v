@@ -1,5 +1,5 @@
+Require Import Lia.
 Require Import List.
-Require Import Omega.
 Require Import String.
 Require Import Grammar.
 Require Import Tactics.
