@@ -4,20 +4,24 @@ Require Import Main.
 Require Import Generator.
 Open Scope string_scope.
 
-(* This file gives an example of how to use Vermillion.
+(*
+Original, naive grammar:
+ 
+    start ::= (term ",")* term
+    term ::= arc | graph | base
+    arc ::= (term "-" term "->")+ term
+          | (term "<-" term "-")+ term
+          | (term "-" term "-")+ term
+    graph ::= unit? { term* }
+    base ::= unit | string
+    unit ::= int
+*)
 
-   The example is based on Grammar 3.11 from Appel's 
-   "Modern Compiler Implementation in ML":
+Inductive base :=
+| int.
 
-   S -> if E then S else S
-   S -> begin S L
-   S -> print E
-
-   L -> end
-   L -> ; S L
-
-   E -> num = num 
- *)
+Inductive term :=
+| arc : term * term * term -> term.
 
 (* Abstract syntax for the language that Grammar 3.11 represents.
    The values that our parser produces will be ASTs with these types. *)
