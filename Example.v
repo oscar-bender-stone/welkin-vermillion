@@ -25,6 +25,8 @@ Inductive graph :=
 | contents: list graph -> graph
 | arc: graph * graph * graph -> graph.
 
+Definition empty_graph := contents [].
+
 Module Welkin_Types <: SYMBOL_TYPES. 
   Inductive terminal' :=
   | Comma | Dash | LeftArrow | RightArrow | LeftBracket | RightBracket | String.
@@ -83,9 +85,20 @@ End G.
 
 Module Export Gen := GeneratorFn G.
 
-Definition g311 : grammar :=
+Definition rule := existT action_ty.
+
+Definition welkin_grammar : grammar :=
   {| start := Terms;
-     prods := []
+     prods := [
+
+      (* terms := term "," terms *)
+      rule (Terms, [NT Term; T Comma; NT Terms])
+        (fun x => empty_graph);
+      rule (Terms, [NT Term])
+        (fun x => empty_graph);
+      rule (Term, [T LeftBracket; T RightBracket])
+        (fun x => empty_graph)
+    ]
   |}.
 
 (* Now we create a module that gives us access to
@@ -100,8 +113,13 @@ Module Import PG := Make G.
 Definition tok (a : terminal) (v : t_semty a) : token :=
   existT _ a v.
 
-Definition example_prog : list token :=
+Definition welkin_example : list token :=
   [tok LeftBracket tt; tok RightBracket tt].
+
+Compute (match parseTableOf welkin_grammar with
+         | inl msg => inl msg
+         | inr tbl => inr (parse tbl (NT Terms) welkin_example)
+         end).
 
 Print nullable_gamma.
 
