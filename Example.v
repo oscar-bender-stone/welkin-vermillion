@@ -114,99 +114,68 @@ Module Export Gen := GeneratorFn G.
 Definition rule := existT action_ty.
 
 Definition welkin_grammar : grammar :=
-  {| start := Graph;
+  {| start := Terms;  (* <--- FIXED: Start is now the list of terms *)
      prods := [
 
-       (* --- GRAPH --- *)
-       (* Graph := unit? "{" Terms "}" *)
-       rule (Graph, [NT UnitOpt; T LeftBracket; NT Terms; T RightBracket])
-         (fun x => empty_graph);
-
-       rule (UnitOpt, [NT Unit]) (fun x => empty_graph);
-       rule (UnitOpt, [])        (fun x => empty_graph);
-
-
        (* --- TERMS (Comma List) --- *)
-       (* Logic: Term -> Check Chain -> (Optional: Comma -> Check End) *)
-
+       (* Matches: epsilon | term | term, term | term, *)
+       
        (* Terms := Term TermChain | epsilon *)
+       (* If input is empty, we match epsilon. If we see a Term start, we parse Term. *)
        rule (Terms, [NT Term; NT TermChain]) (fun x => empty_graph);
        rule (Terms, [])                      (fun x => empty_graph);
 
        (* TermChain := "," TermChainEnd | epsilon *)
+       (* After a term, if we see a comma, consume it. If not, we are done. *)
        rule (TermChain, [T Comma; NT TermChainEnd]) (fun x => empty_graph);
        rule (TermChain, [])                         (fun x => empty_graph);
 
        (* TermChainEnd := Terms *)
+       (* After the comma, we loop back to Terms. *)
+       (* If there is another term, Terms parses it. *)
+       (* If the input ends (trailing comma), Terms parses epsilon. *)
        rule (TermChainEnd, [NT Terms]) (fun x => empty_graph);
 
 
        (* --- ARC (Decision Tree) --- *)
-       (* Path 1 (RArrow): (term - term ->)+ term *)
-       (* Path 2 (LArrow): (term <- term -)+ term *)
-       (* Path 3 (Edge):   (term - term -)+ term *)
-
        (* 1. Arc := Term ArcStartDecision *)
        rule (Arc, [NT Term; NT ArcStartDecision])
          (fun x => empty_graph);
 
        (* 2. ArcStartDecision: Check token after first term *)
-       
-       (* Case '<-': Path 2 (LArrow) *)
-       (* ArcStartDecision := "<-" Term "-" ArcLArrowChain *)
        rule (ArcStartDecision, [T ArrowLeft; NT Term; T Hyphen; NT ArcLArrowChain])
          (fun x => empty_graph);
-
-       (* Case '-': Path 1 (RArrow) or Path 3 (Edge) *)
-       (* ArcStartDecision := "-" Term ArcRightOrEdge *)
        rule (ArcStartDecision, [T Hyphen; NT Term; NT ArcRightOrEdge])
          (fun x => empty_graph);
 
        (* 3. ArcRightOrEdge: Check token after "term - term" *)
-       
-       (* Case '->': Path 1 (RArrow) *)
-       (* ArcRightOrEdge := "->" ArcRArrowChain *)
        rule (ArcRightOrEdge, [T ArrowRight; NT ArcRArrowChain])
          (fun x => empty_graph);
-
-       (* Case '-': Path 3 (Edge) *)
-       (* ArcRightOrEdge := "-" ArcEdgeChain *)
        rule (ArcRightOrEdge, [T Hyphen; NT ArcEdgeChain])
          (fun x => empty_graph);
 
 
        (* --- ARC CHAINS (Loops) --- *)
-       (* Logic: Parse the required Term, then check if we loop or stop. *)
 
        (* -- Left Arrow Chain (Uses <-) -- *)
-       (* ArcLArrowChain := Term ArcLArrowLoop *)
        rule (ArcLArrowChain, [NT Term; NT ArcLArrowLoop]) (fun x => empty_graph);
-
-       (* Loop: "<-" Term "-" ... *)
        rule (ArcLArrowLoop, [T ArrowLeft; NT Term; T Hyphen; NT ArcLArrowChain])
             (fun x => empty_graph);
-       rule (ArcLArrowLoop, []) (fun x => empty_graph); (* Stop *)
+       rule (ArcLArrowLoop, []) (fun x => empty_graph); 
 
 
        (* -- Right Arrow Chain (Uses ->) -- *)
-       (* ArcRArrowChain := Term ArcRArrowLoop *)
        rule (ArcRArrowChain, [NT Term; NT ArcRArrowLoop]) (fun x => empty_graph);
-       
-       (* Loop: "-" Term "->" ... *)
-       (* Note: Pattern is (term - term ->), so loop starts with '-' *)
        rule (ArcRArrowLoop, [T Hyphen; NT Term; T ArrowRight; NT ArcRArrowChain])
             (fun x => empty_graph);
-       rule (ArcRArrowLoop, []) (fun x => empty_graph); (* Stop *)
+       rule (ArcRArrowLoop, []) (fun x => empty_graph); 
 
 
        (* -- Edge Chain (Uses -) -- *)
-       (* ArcEdgeChain := Term ArcEdgeLoop *)
        rule (ArcEdgeChain, [NT Term; NT ArcEdgeLoop]) (fun x => empty_graph);
-
-       (* Loop: "-" Term "-" ... *)
        rule (ArcEdgeLoop, [T Hyphen; NT Term; T Hyphen; NT ArcEdgeChain])
             (fun x => empty_graph);
-       rule (ArcEdgeLoop, []) (fun x => empty_graph); (* Stop *)
+       rule (ArcEdgeLoop, []) (fun x => empty_graph);
 
 
        (* --- BASIC DEFINITIONS --- *)
@@ -214,6 +183,8 @@ Definition welkin_grammar : grammar :=
        rule (Base, [T String])  (fun x => empty_graph);
        rule (Unit, [T Int])     (fun x => empty_graph);
 
+       (* Note: Term logic here assumes a Term is enclosed in braces or is a base unit *)
+       (* Adjust this rule if a "Term" is just a Base/Arc without brackets *)
        rule (Term, [T LeftBracket; T RightBracket])
          (fun x => empty_graph)
     ]
